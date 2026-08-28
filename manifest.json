@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.maxmad75.btc-watcher",
+  "name": "BTC Watcher",
+  "version": "1.0.0",
+  "author": "MaxMad75",
+  "description": "Bitcoin in the bar with what the tickers leave out: fees priced in your own currency so you can see what sending costs right now, the mempool backlog in blocks, difficulty and halving — and a notification when the price moves past a threshold you set.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "BTC Watcher",
+    "description": "Bitcoin price, chain state and move alerts",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaults": {
+      "currency": "EUR",
+      "display": "price,change",
+      "changeWindow": "24h",
+      "pollSeconds": 60,
+      "notifyWindow": "1h",
+      "notifyUpPercent": 0,
+      "notifyDownPercent": 0,
+      "notifyCooldownMinutes": 30
+    },
+    "schema": [
+      {
+        "key": "currency",
+        "type": "string",
+        "label": "Currency",
+        "description": "Any of CoinGecko's 63 quote currencies, e.g. EUR, USD, JPY, SEK."
+      },
+      {
+        "key": "display",
+        "type": "string",
+        "label": "Bar shows",
+        "description": "Comma-separated any of: price, change, block. Set from the panel's Settings fold."
+      },
+      {
+        "key": "changeWindow",
+        "type": "enum",
+        "label": "Change window (bar)",
+        "options": [
+          "10m",
+          "15m",
+          "30m",
+          "1h",
+          "6h",
+          "12h",
+          "24h"
+        ],
+        "description": "Which look-back the percentage in the bar refers to."
+      },
+      {
+        "key": "pollSeconds",
+        "type": "int",
+        "label": "Poll interval (s)",
+        "description": "How often to refresh. Independent of the notification window; the history is what makes the windows work."
+      },
+      {
+        "key": "notifyWindow",
+        "type": "enum",
+        "label": "Notification window",
+        "options": [
+          "10m",
+          "15m",
+          "30m",
+          "1h"
+        ],
+        "description": "Capped at an hour on purpose: a slower alert is a news article, not a notification."
+      },
+      {
+        "key": "notifyUpPercent",
+        "type": "int",
+        "label": "Notify on rise (%)",
+        "description": "Whole percent. 0 disables it."
+      },
+      {
+        "key": "notifyDownPercent",
+        "type": "int",
+        "label": "Notify on fall (%)",
+        "description": "Whole percent. 0 disables it."
+      },
+      {
+        "key": "notifyCooldownMinutes",
+        "type": "int",
+        "label": "Quiet period (min)",
+        "description": "How long one direction stays silent after it fired."
+      }
+    ]
+  },
+  "omarchy": {
+    "requires": [
+      "python3",
+      "curl"
+    ]
+  }
+}
