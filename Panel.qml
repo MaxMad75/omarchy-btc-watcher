@@ -76,8 +76,7 @@ Panel {
   readonly property var difficulty: chain && chain.difficulty ? chain.difficulty : null
   readonly property var mempool: chain && chain.mempool ? chain.mempool : null
   readonly property int nowTs: report && report.ts ? report.ts : 0
-  readonly property bool iconOn: root.setting("showIcon", true) !== false
-    && String(root.setting("showIcon", "true")) !== "false"
+  readonly property bool iconOn: Model.flag(root.setting("showIcon", true), true)
 
   // Everything visual comes from the active Omarchy theme, never from literals:
   // the bar's own values first, the theme singletons as the fallback.

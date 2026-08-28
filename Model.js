@@ -32,6 +32,23 @@ function windowLabel(key) {
   return WINDOW_LABELS[key] || String(key || "");
 }
 
+/**
+ * Read a boolean setting.
+ *
+ * `omarchy bar set` writes into shell.json as text, so a switch that was
+ * turned off arrives as the string "false" — which is truthy, and compares
+ * unequal to the boolean. Anything reading these has to accept both spellings
+ * or the switch silently does nothing.
+ */
+function flag(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "boolean") return value;
+  var text = String(value).toLowerCase();
+  if (text === "false" || text === "0" || text === "no" || text === "off") return false;
+  if (text === "true" || text === "1" || text === "yes" || text === "on") return true;
+  return fallback;
+}
+
 // Grouped with a plain space rather than a locale separator: a period between
 // thousands reads as a decimal point at small sizes. A thin space (U+2009) is
 // the typographically correct separator and was the first attempt, but at bar
@@ -172,7 +189,7 @@ function displayLabel(part) {
  * instead of silently falling back to the default.
  */
 function displayList(settings) {
-  var raw = String((settings && settings.display) || "price");
+  var raw = String((settings && settings.display) || "price,change");
   var wanted = raw.split(",");
   var chosen = [];
 
@@ -187,7 +204,8 @@ function displayList(settings) {
   for (var j = 0; j < DISPLAY_PARTS.length; j++) {
     if (chosen.indexOf(DISPLAY_PARTS[j]) >= 0) ordered.push(DISPLAY_PARTS[j]);
   }
-  return ordered.length > 0 ? ordered : ["price"];
+  // Matches the manifest default, so a fresh install looks like the README.
+  return ordered.length > 0 ? ordered : ["price", "change"];
 }
 
 /**
@@ -199,7 +217,7 @@ function barText(data, settings) {
 
   var currency = (settings && settings.currency) || "EUR";
   var win = (settings && settings.changeWindow) || "24h";
-  var showIcon = !settings || settings.showIcon !== false;
+  var showIcon = flag(settings && settings.showIcon, true);
 
   var price = data.price ? data.price.value : null;
   var change = (data.price && data.price.change) ? data.price.change[win] : null;

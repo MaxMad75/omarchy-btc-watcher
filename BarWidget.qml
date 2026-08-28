@@ -35,6 +35,12 @@ BarWidget {
   property double lastAlertUp: 0
   property double lastAlertDown: 0
 
+  // The first reading after a start establishes the baseline and never alerts.
+  // Two reasons: the notification service is not up yet a second into the
+  // shell's life, so the message would be posted into the void — and a
+  // threshold that was crossed while the machine slept is history, not news.
+  property bool primed: false
+
   function injectPanel() {
     var target = panelLoader.item
     if (!target) return
@@ -141,7 +147,8 @@ BarWidget {
       if (parsed && parsed.ok) {
         root.lastError = ""
         root.report = parsed
-        root.maybeNotify()
+        if (root.primed) root.maybeNotify()
+        else root.primed = true
       } else {
         // Keep the last good reading on screen. A failed poll is a network
         // blip, not news, and blanking the bar over it is worse than stale.
