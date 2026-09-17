@@ -42,6 +42,7 @@ Panel {
 
   function close() {
     setCenterHoverRevealSuppressed(false)
+    currencyPicker.close()
     root.settingsOpen = false
     root.advancedOpen = false
     root.controller.hide()
@@ -137,7 +138,10 @@ Panel {
   // click last week does not decide what today's glance looks like.
   property bool settingsOpen: false
   property bool advancedOpen: false
-  onSettingsOpenChanged: if (settingsOpen) loadCurrencies()
+  onSettingsOpenChanged: {
+    if (settingsOpen) loadCurrencies()
+    else currencyPicker.close()
+  }
 
   property var currencyOptions: []
   readonly property string fetcher: String(Qt.resolvedUrl("bin/btc-watcher-fetch")).replace(/^file:\/\//, "")
@@ -262,6 +266,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: currencyPicker.popupOpen
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -438,6 +443,7 @@ Panel {
             }
 
             SearchableDropdown {
+              id: currencyPicker
               width: Style.space(130)
               showLabel: false
               fontFamily: root.fontFamily
