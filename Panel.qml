@@ -72,8 +72,6 @@ Panel {
     if (root.hostWidgetRefresh) root.hostWidgetRefresh()
   }
 
-  readonly property string label: Model.barText(root.report, root.settings)
-
   readonly property string currency: root.setting("currency", "EUR")
   readonly property var price: report && report.price ? report.price : null
   readonly property var chain: report && report.chain ? report.chain : null
@@ -125,14 +123,36 @@ Panel {
     root.setSetting("display", parts.join(","))
   }
 
+  // Writes are queued: one Process, and `running = true` on a busy one is a
+  // no-op, so a quick second click would otherwise vanish. Per key the last
+  // value wins. Numbers and booleans go in as JSON so shell.json holds real
+  // types, matching the manifest schema.
+  property var settingQueue: []
+
   function setSetting(key, value) {
-    settingProc.command = ["omarchy", "bar", "set", root.moduleName, key, String(value)]
+    var q = root.settingQueue.filter(function(e) { return e.key !== key })
+    q.push({ key: key, value: value })
+    root.settingQueue = q
+    root.drainSettings()
+  }
+
+  function drainSettings() {
+    if (settingProc.running || root.settingQueue.length === 0) return
+    var next = root.settingQueue[0]
+    root.settingQueue = root.settingQueue.slice(1)
+    var cmd = ["omarchy", "bar", "set", root.moduleName, next.key]
+    if (typeof next.value === "number" || typeof next.value === "boolean")
+      cmd.push(JSON.stringify(next.value), "--json")
+    else
+      cmd.push(String(next.value))
+    settingProc.command = cmd
     settingProc.running = true
   }
 
   Process {
     id: settingProc
     command: ["true"]
+    onRunningChanged: if (!running) root.drainSettings()
   }
 
   // The quote currencies CoinGecko accepts. Loaded when the panel first opens
@@ -154,7 +174,7 @@ Panel {
 
   Process {
     id: currencyProc
-    command: [root.fetcher, "--currencies"]
+    command: ["timeout", "20", root.fetcher, "--currencies"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -269,6 +289,9 @@ Panel {
       anchors.fill: parent
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
+      // The host requires this while a dropdown's popup is open, or typing in
+      // its search box is read as panel shortcuts (Esc would close the panel).
+      blocked: currencyDropdown.popupOpen
 
       // Without this the settings section makes the column taller than the
       // popup and nothing draws at all. Tall content has to scroll, which is
@@ -443,6 +466,7 @@ Panel {
             }
 
             SearchableDropdown {
+              id: currencyDropdown
               width: Style.space(130)
               showLabel: false
               fontFamily: root.fontFamily
@@ -450,7 +474,14 @@ Panel {
               emptyText: "No match"
               options: root.currencyOptions.length > 0 ? root.currencyOptions : [root.currency]
               value: root.currency
-              onChanged: function(value) { root.setSetting("currency", value) }
+              onChanged: function(value) {
+                root.setSetting("currency", value)
+                // The dropdown assigns its own value on pick, which drops
+                // the binding; restore it so a failed write shows the truth.
+                Qt.callLater(function() {
+                  currencyDropdown.value = Qt.binding(function() { return root.currency })
+                })
+              }
             }
           }
 
@@ -461,7 +492,7 @@ Panel {
             Chip {
               caption: root.iconOn ? "₿ on" : "₿ off"
               active: root.iconOn
-              onPicked: root.setSetting("showIcon", root.iconOn ? "false" : "true")
+              onPicked: root.setSetting("showIcon", !root.iconOn)
             }
 
             Repeater {

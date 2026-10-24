@@ -33,5 +33,12 @@ class Helpers(unittest.TestCase):
         self.assertTrue(fetch.valid_price({"value": 1.5}))
 
 
+class Currencies(unittest.TestCase):
+    def test_bitcoin_units_are_not_offered(self):
+        for code in ("BTC", "SATS", "BITS"):
+            self.assertIn(code, fetch.NOT_FIAT)
+        self.assertNotIn("EUR", fetch.NOT_FIAT)
+
+
 if __name__ == "__main__":
     unittest.main()

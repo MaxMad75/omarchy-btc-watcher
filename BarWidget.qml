@@ -18,7 +18,9 @@ BarWidget {
   // is derived from this file's own URL instead of being guessed or injected.
   readonly property string fetcher: decodeURIComponent(String(Qt.resolvedUrl("bin/btc-watcher-fetch")).replace(/^file:\/\//, ""))
 
-  readonly property string currency: root.setting("currency", "EUR")
+  // Normalised exactly as the fetcher does, so a hand-edited " eur" is not
+  // mistaken for a different currency than the one in its reports.
+  readonly property string currency: String(root.setting("currency", "EUR")).trim().toUpperCase()
   // Settings are hand-editable in shell.json, so a value that is not a number
   // has to land on the default rather than on NaN — a NaN Timer interval never
   // fires again, and the widget would go quietly stale.
@@ -41,6 +43,7 @@ BarWidget {
   // shell's life, so the message would be posted into the void — and a
   // threshold that was crossed while the machine slept is history, not news.
   property bool primed: false
+  readonly property double startedAt: Date.now()
 
   function injectPanel() {
     var target = panelLoader.item
@@ -124,6 +127,9 @@ BarWidget {
   implicitHeight: button.implicitHeight
 
   readonly property string label: {
+    // A vertical bar is barSize wide; the full text would run out of it.
+    // Everything is in the tooltip and the panel.
+    if (root.vertical) return "₿"
     var text = Model.barText(root.report, root.settings)
     return text !== "" ? text : "₿"
   }
@@ -131,7 +137,9 @@ BarWidget {
   onBarChanged: injectPanel()
   onSettingsChanged: {
     injectPanel()
-    // Currency or window changed: the cached answer is for the old question.
+    // Currency or window changed: the cached answer is for the old question,
+    // and its amount would be drawn with the new currency's symbol.
+    if (root.report && root.report.currency !== root.currency) root.report = null
     refresh()
   }
   onReportChanged: injectPanel()
@@ -169,7 +177,7 @@ BarWidget {
 
       // A report for another currency than the one now configured is the
       // answer to an old question; drop it and ask again.
-      if (parsed && parsed.ok && parsed.currency !== String(root.currency).toUpperCase()) {
+      if (parsed && parsed.ok && parsed.currency !== root.currency) {
         root.refreshQueued = true
         return
       }
@@ -177,7 +185,9 @@ BarWidget {
       if (parsed && parsed.ok) {
         root.lastError = ""
         root.report = parsed
-        if (root.primed) root.maybeNotify()
+        // Two readings in the first poll interval (startup refresh plus a
+        // settings update) must not count as "after the baseline".
+        if (root.primed && Date.now() - root.startedAt > root.pollSeconds * 1000) root.maybeNotify()
         else root.primed = true
       } else {
         // Keep the last good reading on screen. A failed poll is a network

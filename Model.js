@@ -92,7 +92,7 @@ function formatHeight(height) {
 }
 
 function formatAge(seconds) {
-  if (seconds === null || seconds === undefined) return "";
+  if (seconds === null || seconds === undefined || !isFinite(seconds)) return "";
   var minutes = Math.floor(seconds / 60);
   if (minutes < 60) return minutes + "m";
   var hours = Math.floor(minutes / 60);
@@ -118,6 +118,7 @@ function formatEta(timestampSeconds, nowSeconds) {
   if (!timestampSeconds) return "–";
   var delta = timestampSeconds - (nowSeconds || Math.floor(Date.now() / 1000));
   if (delta <= 0) return "due";
+  if (delta < 3600) return "in " + Math.max(1, Math.round(delta / 60)) + " min";
   var hours = Math.round(delta / 3600);
   if (hours < 48) return "in " + hours + " h";
   return "in " + Math.round(hours / 24) + " days";
@@ -148,6 +149,7 @@ function formatFeeCost(satsPerVb, price, currency) {
 function formatMempool(vsize) {
   if (!vsize || isNaN(vsize)) return "–";
   var blocks = Math.round(vsize / 1000000);
+  if (blocks < 1) return "empty  ·  under 1 block deep";
   var mood = blocks <= 2 ? "empty" : (blocks <= 12 ? "normal" : (blocks <= 60 ? "busy" : "congested"));
   return mood + "  ·  " + blocks + (blocks === 1 ? " block deep" : " blocks deep");
 }
@@ -162,7 +164,10 @@ function satsPerUnit(price) {
 function formatSatsPerUnit(price, currency) {
   var sats = satsPerUnit(price);
   if (!sats) return "–";
-  return groupDigits(sats) + " sat / " + currencySymbol(currency);
+  // A currency worth less than a sat per unit (VND, IDR) would otherwise
+  // round to "0 sat".
+  var amount = sats < 10 ? sats.toFixed(sats < 1 ? 3 : 2) : groupDigits(sats);
+  return amount + " sat / " + currencySymbol(currency);
 }
 
 // U+20BF BITCOIN SIGN. A plain character rather than a Nerd Font glyph, so it
