@@ -41,10 +41,10 @@ Panel {
   }
 
   function close() {
-    setCenterHoverRevealSuppressed(false)
     root.settingsOpen = false
     root.advancedOpen = false
     root.controller.hide()
+    setCenterHoverRevealSuppressed(false)
   }
 
   function toggle() {
@@ -58,9 +58,14 @@ Panel {
     return false
   }
 
+  // Third-party widgets get a PluginBarApi, where this property is read-only:
+  // assigning to it throws. Use the host's setter when it exists, and never
+  // let a failure here keep the panel from opening or — worse — closing.
   function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && "centerHoverRevealSuppressed" in root.bar)
-      root.bar.centerHoverRevealSuppressed = value
+    try {
+      if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+        root.bar.setCenterHoverRevealSuppressed(value)
+    } catch (e) {}
   }
 
   function refresh() {
