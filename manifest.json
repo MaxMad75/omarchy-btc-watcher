@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.maxmad75.btc-watcher",
   "name": "BTC Watcher",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "author": "MaxMad75",
   "description": "Bitcoin in the bar with what the tickers leave out: fees priced in your own currency so you can see what sending costs right now, the mempool backlog in blocks, difficulty and halving — and a notification when the price moves past a threshold you set.",
   "kinds": [
