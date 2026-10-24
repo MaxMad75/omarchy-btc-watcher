@@ -249,6 +249,7 @@ function tooltipText(data, settings) {
       parts.push(formatChange(c) + " (" + windowLabel(win) + ")");
   }
   if (data.chain) parts.push(formatHeight(data.chain.height));
+  if (data.price && data.price.stale) parts.push("price may be out of date");
   return parts.length ? parts.join(" · ") : "BTC Watcher";
 }
 

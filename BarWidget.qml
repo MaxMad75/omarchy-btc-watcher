@@ -16,7 +16,7 @@ BarWidget {
 
   // The host does not hand a bar widget its manifest, so the plugin directory
   // is derived from this file's own URL instead of being guessed or injected.
-  readonly property string fetcher: String(Qt.resolvedUrl("bin/btc-watcher-fetch")).replace(/^file:\/\//, "")
+  readonly property string fetcher: decodeURIComponent(String(Qt.resolvedUrl("bin/btc-watcher-fetch")).replace(/^file:\/\//, ""))
 
   readonly property string currency: root.setting("currency", "EUR")
   // Settings are hand-editable in shell.json, so a value that is not a number
@@ -30,10 +30,11 @@ BarWidget {
   readonly property int pollSeconds: Math.max(15, root.number("pollSeconds", 60))
   readonly property int cooldownMs: Math.max(0, root.number("notifyCooldownMinutes", 30)) * 60000
 
-  // When each direction last fired, so a threshold that stays crossed does not
-  // notify on every poll.
-  property double lastAlertUp: 0
-  property double lastAlertDown: 0
+  // The shell builds one widget per monitor and every one of them polls, so
+  // the cooldown is not kept here: the fetcher claims an alert under a file
+  // lock, and only the instance that wins the claim notifies.
+  property var pendingNotice: null
+  property bool refreshQueued: false
 
   // The first reading after a start establishes the baseline and never alerts.
   // Two reasons: the notification service is not up yet a second into the
@@ -53,7 +54,12 @@ BarWidget {
   }
 
   function refresh() {
-    if (!fetchProc.running) fetchProc.running = true
+    if (fetchProc.running) {
+      // The running fetch may be asking the old question (currency changed).
+      root.refreshQueued = true
+      return
+    }
+    fetchProc.running = true
   }
 
   function togglePanel() {
@@ -79,13 +85,23 @@ BarWidget {
   function maybeNotify() {
     var alert = Model.pendingAlert(root.report, root.settings)
     if (!alert) return
+    // A price the fetcher could not refresh is not news.
+    if (root.report.price && root.report.price.stale) return
+    if (claimProc.running) return
 
-    var now = Date.now()
-    var last = alert.direction === "up" ? root.lastAlertUp : root.lastAlertDown
-    if (now - last < root.cooldownMs) return
+    root.pendingNotice = alert
+    claimProc.command = [
+      "timeout", "5", root.fetcher,
+      "--claim-alert", alert.direction,
+      "--cooldown", String(root.cooldownMs / 1000)
+    ]
+    claimProc.running = true
+  }
 
-    if (alert.direction === "up") root.lastAlertUp = now
-    else root.lastAlertDown = now
+  function sendNotice() {
+    var alert = root.pendingNotice
+    root.pendingNotice = null
+    if (!alert || !root.report || !root.report.price) return
 
     var arrow = alert.direction === "up" ? "▲" : "▼"
     var headline = "Bitcoin " + arrow + " " + Math.abs(alert.percent).toFixed(1) + " %"
@@ -101,11 +117,16 @@ BarWidget {
     notifyProc.running = true
   }
 
-  visible: label !== ""
+  // Without data the pill stays as a bare ₿ (error in the tooltip) rather
+  // than vanishing with nothing to click.
+  visible: true
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  readonly property string label: Model.barText(root.report, root.settings)
+  readonly property string label: {
+    var text = Model.barText(root.report, root.settings)
+    return text !== "" ? text : "₿"
+  }
 
   onBarChanged: injectPanel()
   onSettingsChanged: {
@@ -117,7 +138,9 @@ BarWidget {
 
   Process {
     id: fetchProc
-    command: [root.fetcher, "--currency", root.currency]
+    // `timeout`: DNS resolution is outside the fetcher's own request budget,
+    // and a hung Process would otherwise block every later poll.
+    command: ["timeout", "25", root.fetcher, "--currency", root.currency]
     // Parsed here rather than in onExited: the collector is only guaranteed to
     // have the whole stream at this point, and exit can land first.
     stdout: StdioCollector {
@@ -144,6 +167,13 @@ BarWidget {
         parsed = null
       }
 
+      // A report for another currency than the one now configured is the
+      // answer to an old question; drop it and ask again.
+      if (parsed && parsed.ok && parsed.currency !== String(root.currency).toUpperCase()) {
+        root.refreshQueued = true
+        return
+      }
+
       if (parsed && parsed.ok) {
         root.lastError = ""
         root.report = parsed
@@ -152,7 +182,28 @@ BarWidget {
       } else {
         // Keep the last good reading on screen. A failed poll is a network
         // blip, not news, and blanking the bar over it is worse than stale.
-        root.lastError = "No answer from mempool.space / CoinGecko"
+        root.lastError = parsed && parsed.error
+          ? String(parsed.error).slice(0, 120)
+          : "No answer from mempool.space / CoinGecko"
+      }
+    }
+
+    onRunningChanged: {
+      if (!running && root.refreshQueued) {
+        root.refreshQueued = false
+        Qt.callLater(root.refresh)
+      }
+    }
+  }
+
+  Process {
+    id: claimProc
+    command: ["true"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (String(text || "").trim() === "yes") root.sendNotice()
+        else root.pendingNotice = null
       }
     }
   }
@@ -189,10 +240,12 @@ BarWidget {
     bar: root.bar
     text: root.label
     labelVisible: true
-    hasVisualContent: text !== ""
+    hasVisualContent: true
     horizontalMargin: 8.75
     verticalPadding: 8.75
-    tooltipText: Model.tooltipText(root.report, root.settings)
+    tooltipText: root.lastError !== "" && !root.report
+      ? root.lastError
+      : Model.tooltipText(root.report, root.settings)
 
     onPressed: function(b) {
       if (b === Qt.MiddleButton) root.refresh()

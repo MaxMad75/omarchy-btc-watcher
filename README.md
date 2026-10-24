@@ -178,8 +178,7 @@ The bar keeps its last value rather than blanking over a failed poll.
 
 ## Requirements
 
-Omarchy 4 (Quattro) with `omarchy-shell`, plus `python3` and `curl` — both of
-which a stock install already has (`uwsm`, which launches everything on the
+Omarchy 4 (Quattro) with `omarchy-shell`, plus `python3` — which a stock install already has (`uwsm`, which launches everything on the
 desktop, depends on python itself). Network access to `mempool.space` and
 `api.coingecko.com`, and nothing else.
 

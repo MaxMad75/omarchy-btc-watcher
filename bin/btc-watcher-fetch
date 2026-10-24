@@ -23,6 +23,8 @@ a file other things can reach; the shell process reading it is long-lived.
 """
 
 import argparse
+import fcntl
+import http.client
 import json
 import os
 import re
@@ -44,8 +46,10 @@ TOTAL_BUDGET = 15         # seconds for everything
 CHAIN_TTL = 45            # blocks arrive every ~10 min; no need to hammer
 PRICE_TTL = 30
 HISTORY_SPAN = 24 * 3600  # what the longest selectable window needs
-HISTORY_MAX_POINTS = 4000 # a hard ceiling independent of the time span
+HISTORY_MAX_POINTS = 6000 # a hard ceiling independent of the time span
 MAX_CACHE_BYTES = 1024 * 1024
+MIN_SAMPLE_TOLERANCE = 120  # s; floor of how far a sample may sit from a window start
+PRICE_STALE_AFTER = 300     # s; an older cached price is shown but never alerts
 
 MEMPOOL = "https://mempool.space/api"
 COINGECKO = "https://api.coingecko.com/api/v3"
@@ -199,7 +203,7 @@ def get(url):
             # Bounded read: an upstream that answers with a gigabyte is a
             # denial of service against the shell process, not a data source.
             return json.loads(response.read(2 * 1024 * 1024))
-    except (urllib.error.URLError, ValueError, OSError):
+    except (urllib.error.URLError, http.client.HTTPException, ValueError, OSError):
         return None
 
 
@@ -213,6 +217,8 @@ def fetch_chain():
     if not isinstance(blocks, list) or not blocks:
         return None
     tip = blocks[0]
+    if not isinstance(tip, dict):
+        return None
     height = tip.get("height")
     if not isinstance(height, int):
         return None
@@ -269,7 +275,19 @@ def fetch_price(currency):
     value = coin[code]
     if not isinstance(value, (int, float)):
         return None
-    return {"value": float(value), "upstream_24h": coin.get("%s_24h_change" % code)}
+    return {
+        "value": float(value),
+        "upstream_24h": coin.get("%s_24h_change" % code),
+        "fetched_ts": int(time.time()),
+    }
+
+
+def valid_price(obj):
+    return (
+        isinstance(obj, dict)
+        and isinstance(obj.get("value"), (int, float))
+        and not isinstance(obj.get("value"), bool)
+    )
 
 
 # ── price history ────────────────────────────────────────────────────────────
@@ -281,18 +299,22 @@ def history_path(currency):
     return os.path.join(CACHE_DIR, "history-%s.json" % (safe or "usd"))
 
 
-def update_history(currency, price, now):
-    path = history_path(currency)
-    points = read_json(path) or []
+def clean_points(points, now):
     if not isinstance(points, list):
-        points = []
-
+        return []
     cleaned = [
         p for p in points
         if isinstance(p, list) and len(p) == 2
         and isinstance(p[0], (int, float)) and isinstance(p[1], (int, float))
         and now - p[0] <= HISTORY_SPAN
     ]
+    cleaned.sort(key=lambda p: p[0])
+    return cleaned
+
+
+def update_history(currency, price, now):
+    path = history_path(currency)
+    cleaned = clean_points(read_json(path), now)
     cleaned.append([int(now), price])
     cleaned.sort(key=lambda p: p[0])
     if len(cleaned) > HISTORY_MAX_POINTS:
@@ -315,6 +337,11 @@ def changes_from(points, price, now, upstream_24h):
         target = now - seconds
         # The sample nearest the window's start; the series is sorted.
         best = min(points, key=lambda p: abs(p[0] - target))
+        # After a suspend the nearest sample can be hours from the window's
+        # start; that would be a different window's change, not this one's.
+        if abs(best[0] - target) > max(seconds * 0.25, MIN_SAMPLE_TOLERANCE):
+            out[name] = upstream_24h if name == "24h" else None
+            continue
         if best[1] <= 0:
             out[name] = None
             continue
@@ -357,6 +384,45 @@ def list_currencies():
     return 0
 
 
+# ── alert de-duplication ─────────────────────────────────────────────────────
+
+def claim_alert(direction, cooldown):
+    """True if this caller may notify. The shell runs one widget per monitor;
+    all of them poll, so who alerts is decided here, under a file lock."""
+    if direction not in ("up", "down") or not cache_dir_ready():
+        return False
+    path = os.path.join(CACHE_DIR, "alerts.lock")
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | CLOEXEC, 0o600)
+    except OSError:
+        return False
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid():
+            return False
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        raw = os.read(fd, 4096)
+        try:
+            state = json.loads(raw) if raw else {}
+        except ValueError:
+            state = {}
+        if not isinstance(state, dict):
+            state = {}
+        now = time.time()
+        last = state.get(direction)
+        if isinstance(last, (int, float)) and 0 <= now - last < cooldown:
+            return False
+        state[direction] = now
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, json.dumps(state).encode("utf-8"))
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)  # also releases the lock
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -368,17 +434,48 @@ def main():
         action="store_true",
         help="list the quote currencies CoinGecko accepts, one per line",
     )
+    parser.add_argument("--claim-alert", choices=("up", "down"))
+    parser.add_argument("--cooldown", type=float, default=1800)
     args = parser.parse_args()
+
+    if args.claim_alert:
+        sys.stdout.write("yes\n" if claim_alert(args.claim_alert, max(0, args.cooldown)) else "no\n")
+        return 0
 
     if args.currencies:
         return list_currencies()
 
-    currency = clean_currency(args.currency)
+    currency = str(args.currency or "").strip().upper()
+    if not CURRENCY_RE.match(currency):
+        json.dump(
+            {"ok": False, "error": "Invalid currency code: %r" % args.currency[:16]},
+            sys.stdout,
+        )
+        sys.stdout.write("\n")
+        return 1
     now = time.time()
     chain_cache = os.path.join(CACHE_DIR, "chain.json")
     price_cache = os.path.join(CACHE_DIR, "price-%s.json" % currency.lower())
 
+    # Price first: it is the core of the widget, and a slow chain upstream
+    # must not spend the whole budget before it is asked.
+    price = None if args.no_cache else read_json(price_cache, max_age=PRICE_TTL)
+    price = price if valid_price(price) else None
+    fresh_price = False
+    stale = False
+    if price is None:
+        price = fetch_price(currency)
+        if price is not None:
+            write_json(price_cache, price)
+            fresh_price = True
+        else:
+            price = read_json(price_cache)
+            price = price if valid_price(price) else None
+            stale = price is not None
+
     chain = None if args.no_cache else read_json(chain_cache, max_age=CHAIN_TTL)
+    if not isinstance(chain, dict):
+        chain = None
     if chain is None:
         chain = fetch_chain()
         if chain is not None:
@@ -387,34 +484,32 @@ def main():
             # Stale beats blank: the bar keeps its last known height rather
             # than emptying itself over one failed request.
             chain = read_json(chain_cache)
-
-    price = None if args.no_cache else read_json(price_cache, max_age=PRICE_TTL)
-    fresh_price = False
-    if price is None:
-        price = fetch_price(currency)
-        if price is not None:
-            write_json(price_cache, price)
-            fresh_price = True
-        else:
-            price = read_json(price_cache)
+            if not isinstance(chain, dict):
+                chain = None
 
     result = {"ok": False, "ts": int(now), "currency": currency}
 
     if chain:
         result["chain"] = chain
     if price:
-        points = (
-            update_history(currency, price["value"], now)
-            if fresh_price
-            else (read_json(history_path(currency)) or [])
-        )
+        if fresh_price:
+            points = update_history(currency, price["value"], now)
+        else:
+            points = clean_points(read_json(history_path(currency)), now)
         changes, span = changes_from(
             points, price["value"], now, price.get("upstream_24h")
         )
+        fetched = price.get("fetched_ts")
+        age = int(now - fetched) if isinstance(fetched, (int, float)) else None
+        # A price the upstream would not refresh is shown, but flagged: the
+        # widget must not raise an alert over a reading that is not new.
+        stale = stale and (age is None or age > PRICE_STALE_AFTER)
         result["price"] = {
             "value": price["value"],
             "change": changes,
             "history_span_s": span,
+            "stale": stale,
+            "age_s": age,
         }
 
     result["ok"] = bool(chain or price)

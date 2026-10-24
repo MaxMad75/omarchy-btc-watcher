@@ -140,7 +140,7 @@ Panel {
   onSettingsOpenChanged: if (settingsOpen) loadCurrencies()
 
   property var currencyOptions: []
-  readonly property string fetcher: String(Qt.resolvedUrl("bin/btc-watcher-fetch")).replace(/^file:\/\//, "")
+  readonly property string fetcher: decodeURIComponent(String(Qt.resolvedUrl("bin/btc-watcher-fetch")).replace(/^file:\/\//, ""))
 
   function loadCurrencies() {
     if (root.currencyOptions.length > 0 || currencyProc.running) return
